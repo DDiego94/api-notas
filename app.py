@@ -1,13 +1,18 @@
 
+import email
+
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from database import SessionLocal, engine
 from models import UsuarioDB, NotaDB
 from passlib.context import CryptContext
-import models
+import models, os
+from jose import jwt
+from datetime import datetime, timedelta
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+SECRET_KEY = os.getenv("SECRET_KEY")
 models.Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -23,6 +28,13 @@ app = FastAPI()
 class UsuarioSchema(BaseModel):
     email: str
     password: str
+
+
+def crear_token(email: str):
+    expiracion = datetime.utcnow() + timedelta(hours=24)
+    datos = {"sub": email, "exp": expiracion}
+    return jwt.encode(datos, SECRET_KEY, algorithm="HS256")
+
 
 @app.get("/")
 def inicio():
@@ -52,6 +64,16 @@ def crear_usuario(usuario: UsuarioSchema, db = Depends(get_db)):
     db.commit()
     db.refresh(nuevo)
     return nuevo
+
+@app.post("/login")
+def login(usuario: UsuarioSchema, db = Depends(get_db)):
+    usuario_db = db.query(UsuarioDB).filter(UsuarioDB.email == usuario.email).first()
+    if not usuario_db:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not pwd_context.verify(usuario.password, usuario_db.password):
+        raise HTTPException(status_code=401, detail="Usuario y clave no coinciden")
+    else:
+        return {"token": crear_token(usuario_db.email)}
 
 @app.put("/libros/{titulo}")
 def modificar_libro(titulo: str, libro: LibroSchema, db = Depends(get_db)):
