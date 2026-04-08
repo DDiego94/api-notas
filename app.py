@@ -2,8 +2,11 @@
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from database import SessionLocal, engine
-from models import LibroDB
+from models import UsuarioDB, NotaDB
+from passlib.context import CryptContext
 import models
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -17,10 +20,9 @@ def get_db():
 
 app = FastAPI()
 
-class LibroSchema(BaseModel):
-    titulo:str
-    autor:str
-    paginas:int
+class UsuarioSchema(BaseModel):
+    email: str
+    password: str
 
 @app.get("/")
 def inicio():
@@ -28,23 +30,23 @@ def inicio():
 
 @app.get("/libros")
 def listar_libros(db = Depends(get_db)):
-    libros = db.query(LibroDB).all()
+    libros = db.query(NotaDB).all()
     return libros
 
 @app.get("/libros/{titulo}")
 def buscar_libro( titulo: str, db = Depends(get_db)):
-    libro = db.query(LibroDB).filter(LibroDB.titulo == titulo).first()
+    libro = db.query(NotaDB).filter(NotaDB.titulo == titulo).first()
     if libro:
         return libro
     else:
         raise HTTPException(status_code=404, detail="Libro no encontrado")
 
-@app.post("/libros")
-def crear_libro(libro: LibroSchema, db = Depends(get_db)):
-    nuevo = LibroDB(
-        titulo=libro.titulo,
-        autor=libro.autor,
-        paginas=libro.paginas
+@app.post("/registro")
+def crear_usuario(usuario: UsuarioSchema, db = Depends(get_db)):
+    password_hasheada = pwd_context.hash(usuario.password)
+    nuevo = UsuarioDB(
+        email=usuario.email,
+        password=password_hasheada
     )
     db.add(nuevo)
     db.commit()
