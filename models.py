@@ -10,7 +10,7 @@ class UsuarioDB(Base):
     email = Column(String, nullable=False)
     password = Column(String, nullable=False)
 
-    post = relationship("NotaDB", back_populates="autor")
+    notas = relationship("NotaDB", back_populates="autor")
 
 class NotaDB(Base):
     __tablename__ = "notas"
@@ -18,6 +18,6 @@ class NotaDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, nullable=False)
     contenido = Column(String, nullable=False)
-    usuario_id = Column(Integer, ForeignKey('Usuarios.id'), nullable=False)
+    usuario_id = Column(Integer, ForeignKey('usuarios.id'), nullable=False)
 
-    author = relationship("UsuarioDB", back_populates="notas")
+    autor = relationship("UsuarioDB", back_populates="notas")

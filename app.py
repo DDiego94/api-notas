@@ -1,20 +1,23 @@
-
-import email
-
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from database import SessionLocal, engine
 from models import UsuarioDB, NotaDB
 from passlib.context import CryptContext
-import models, os
+import models
+import os
 from jose import jwt
 from datetime import datetime, timedelta
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
+
 models.Base.metadata.create_all(bind=engine)
 
+# Coneccion a la db
 def get_db():
     db = SessionLocal()
     try:
@@ -22,37 +25,72 @@ def get_db():
     finally:
         db.close()
 
-
+# Creacion de la app
 app = FastAPI()
 
+# Definicion de esquemas
 class UsuarioSchema(BaseModel):
     email: str
     password: str
 
+class NotaSchema(BaseModel):
+    titulo: str
+    contenido: str
 
+# Creacion y verificacion de Tokens
 def crear_token(email: str):
     expiracion = datetime.utcnow() + timedelta(hours=24)
     datos = {"sub": email, "exp": expiracion}
     return jwt.encode(datos, SECRET_KEY, algorithm="HS256")
 
+def verificar_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        email = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Token invalido")
+        return email
+    except:
+        raise HTTPException(status_code=401, detail="Token invalido")
 
+# Ruta de inicio
 @app.get("/")
 def inicio():
     return "H"
 
-@app.get("/libros")
-def listar_libros(db = Depends(get_db)):
-    libros = db.query(NotaDB).all()
-    return libros
+# Ruta para listar notas
+@app.get("/notas")
+def listar_notas(db = Depends(get_db), email = Depends(verificar_token)):
+    usuario_db = db.query(UsuarioDB).filter(UsuarioDB.email == email).first()
+    notas = db.query(NotaDB).filter(NotaDB.usuario_id == usuario_db.id).all()
+    return notas
 
-@app.get("/libros/{titulo}")
-def buscar_libro( titulo: str, db = Depends(get_db)):
-    libro = db.query(NotaDB).filter(NotaDB.titulo == titulo).first()
-    if libro:
-        return libro
+# Ruta para crear notas
+@app.post("/nota_nueva")
+def crear_nota(nota: NotaSchema, db = Depends(get_db), email = Depends(verificar_token)):
+    usuario_db = db.query(UsuarioDB).filter(UsuarioDB.email == email).first()
+    nueva_nota = NotaDB(
+        titulo=nota.titulo,
+        contenido=nota.contenido,
+        usuario_id=usuario_db.id
+    )
+    db.add(nueva_nota)
+    db.commit()
+    db.refresh(nueva_nota)
+    return nueva_nota
+
+# Ruta para eliminar nota
+@app.delete("/notas/{id}")
+def eliminar_nota(id: int, db = Depends(get_db), email = Depends(verificar_token)):
+    nota = db.query(NotaDB).filter(NotaDB.id == id).first()
+    if nota:
+        db.delete(nota)
+        db.commit()
+        return "Nota eliminada"
     else:
-        raise HTTPException(status_code=404, detail="Libro no encontrado")
+        raise HTTPException(status_code=404, detail="Nota no encontrada")
 
+# Ruta para registro de usuario
 @app.post("/registro")
 def crear_usuario(usuario: UsuarioSchema, db = Depends(get_db)):
     password_hasheada = pwd_context.hash(usuario.password)
@@ -65,34 +103,16 @@ def crear_usuario(usuario: UsuarioSchema, db = Depends(get_db)):
     db.refresh(nuevo)
     return nuevo
 
+# Ruta para login de usuario
 @app.post("/login")
-def login(usuario: UsuarioSchema, db = Depends(get_db)):
-    usuario_db = db.query(UsuarioDB).filter(UsuarioDB.email == usuario.email).first()
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db = Depends(get_db)):
+    usuario_db = db.query(UsuarioDB).filter(UsuarioDB.email == form_data.username).first()
     if not usuario_db:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not pwd_context.verify(usuario.password, usuario_db.password):
+    if not pwd_context.verify(form_data.password, usuario_db.password):
         raise HTTPException(status_code=401, detail="Usuario y clave no coinciden")
-    else:
-        return {"token": crear_token(usuario_db.email)}
-
-@app.put("/libros/{titulo}")
-def modificar_libro(titulo: str, libro: LibroSchema, db = Depends(get_db)):
-    mod = db.query(LibroDB).filter(LibroDB.titulo == titulo).first()
-    if not mod:
-        raise HTTPException(status_code=404, detail="Libro no encontrado")
-    mod.titulo=libro.titulo
-    mod.autor=libro.autor
-    mod.paginas=libro.paginas
-    db.commit()
-    db.refresh(mod)
-    return mod
-
-@app.delete("/libros/{titulo}")
-def eliminar_libro(titulo: str, db = Depends(get_db)):
-    mod = db.query(LibroDB).filter(LibroDB.titulo == titulo).first()
-    if mod:
-        db.delete(mod)
-        db.commit()
-        return "Libro eliminado"
-    else:
-        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    token = crear_token(usuario_db.email)
+    return {
+        "access_token": token, 
+        "token_type": "bearer"
+    }
